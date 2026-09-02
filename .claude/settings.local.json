@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx -y skills add vercel-labs/skills --skill find-skills --agent claude-code)"
+    ]
+  }
+}

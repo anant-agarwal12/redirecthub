@@ -1,0 +1,16 @@
+{
+  "name": "redirecthub",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test tests/**"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "pg": "^8.13.1",
+    "redis": "^4.7.0"
+  },
+  "devDependencies": {}
+}
