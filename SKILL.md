@@ -48,6 +48,29 @@ Components:
 - [x] Connection pool management — evidence: src/db.js Pool setup
 - [x] Parameterized queries ($1/$2) — evidence: src/db.js query()
 - [x] Environment-based config — evidence: DATABASE_URL in .env
+- [x] Distributed ID generation trade-offs
+  
+  **Strategy chosen: Auto-increment + Base62 encoding**
+  
+  **Three approaches evaluated:**
+  
+  1. Auto-increment + Base62 (CHOSEN)
+     - How: PostgreSQL SERIAL auto-generates unique integer, Base62-encode it into alphanumeric string
+     - Pros: Guaranteed uniqueness (DB enforces via PRIMARY KEY), no collision checks needed, short codes stay compact
+     - Cons: Sequential/predictable — codes leak creation order and volume. Unsafe across distributed shards because independent shards can generate identical integers
+     - Trade-off: Predictability acceptable for single-instance system. Simplicity and guaranteed uniqueness outweigh predictability risk
+  
+  2. Random alphanumeric generation
+     - How: Generate N random characters, insert with UNIQUE constraint
+     - Pros: Non-predictable, works across distributed systems without coordination
+     - Cons: Collision risk grows with scale; requires uniqueness check on insert (either extra SELECT query or retry loop on conflict)
+  
+  3. Hash-based (MD5/SHA of URL, truncated)
+     - How: Hash the original URL, take first N characters as code
+     - Pros: Same URL always generates same code (natural deduplication)
+     - Cons: Hash collisions possible even after truncation; unrelated URLs can collide, causing data loss
+  
+  Evidence: src/utils/base62.js (encode/decode implementation), src/db.js createLink() (two-step insert pattern)
 
 # 6. Metrics
 
