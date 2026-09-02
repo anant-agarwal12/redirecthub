@@ -39,7 +39,16 @@ Components:
 
 # 4. Decisions
 
+| Decision | Options | Chosen | Why | Trade-off |
+|---|---|---|---|---|
+| Connection pool vs single connection | Single connection per request vs Pool | Pool (via pg library) | Pool reuses connections — opening a new TCP connection per request adds 20-100ms overhead and crashes under load | Connection limit — pool has a max size, requests queue if exceeded |
+
 # 5. Skills demonstrated
+
+- [x] PostgreSQL schema design — evidence: psql CREATE TABLE links
+- [x] Connection pool management — evidence: src/db.js Pool setup
+- [x] Parameterized queries ($1/$2) — evidence: src/db.js query()
+- [x] Environment-based config — evidence: DATABASE_URL in .env
 
 # 6. Metrics
 

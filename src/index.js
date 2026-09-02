@@ -5,6 +5,9 @@
 // Must run before we read any process.env value below.
 require('dotenv').config()
 
+// Import the database module so we can run queries and test the connection.
+const db = require('./db')
+
 // Import the Express library and create an application instance.
 // `app` is the object we attach middleware and routes to.
 const express = require('express')
@@ -34,8 +37,10 @@ app.get('/:code', (req, res) => {
   res.json({ message: 'redirect not implemented yet', code: req.params.code })
 })
 
-// Start listening for HTTP requests. Use the port from .env, or 3000 as a fallback.
+// Start server, then immediately test database connection.
+// If database is unreachable, we know before any request comes in.
 const PORT = process.env.PORT || 3000
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log('Server running on port ' + PORT)
+  await db.testConnection()
 })
