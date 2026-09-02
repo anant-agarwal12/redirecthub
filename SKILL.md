@@ -2,7 +2,6 @@
 project: RedirectHub - Payment Link Management Service
 track: backend
 level: beginner-to-intermediate
-started: 2025-09-02
 shipped: [TBD]
 repo: https://github.com/anant-agarwal12/redirecthub
 live: [TBD]
@@ -34,8 +33,8 @@ without exposing raw payment gateway URLs.
 Components:
 - Express → handles HTTP routing and middleware
 - PostgreSQL → persistent storage for links and analytics
-- Redis → read-through cache for redirect path (Day 2)
-- k6 → load testing tool to measure p50/p95/p99 (Day 2)
+- Redis → read-through cache for redirect path 
+- k6 → load testing tool to measure p50/p95/p99 
 
 # 4. Decisions
 
