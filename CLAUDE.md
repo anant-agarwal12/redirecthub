@@ -86,17 +86,101 @@ Update the phase status above as phases complete.
 3. If the output shows an error, stop and report it in full before
    trying to fix anything.
 
-## After Each Phase
-After completing and verifying any phase, automatically generate 
-a "Learning Prompt" block formatted exactly like this:
+## Learning Prompt Generation
 
----LEARNING PROMPT FOR PHASE [N]---
-Topics to understand: [list every concept introduced this phase]
-Files to paste into ChatGPT: [list filenames in order]
-Paste order: [explain what to paste first and why]
----END LEARNING PROMPT---
+After any phase is complete and verified working, if the developer 
+asks "generate learning prompt for phase [N]", do this:
 
-Do not skip this step. Generate it even if not asked.
+### Step 1: Identify What Changed
+- List all NEW files created this phase
+- List all MODIFIED files (existing files with edits)
+- Note which files stayed unchanged
+
+### Step 2: Build the ChatGPT Prompt Structure
+Generate a ChatGPT prompt with this exact format:
+
+---
+I am a CS student with Python and C++ experience. I just built 
+Phase [N] of RedirectHub. Teach me what I built from scratch.
+
+**What was built this phase:** [one sentence summary]
+
+**New concepts introduced:** [bullet list]
+
+**Files to understand** (in order):
+[dependency order - imports FROM first, then what imports it]
+
+**Teach me:**
+- What each concept is (plain English, no code)
+- Why it exists and what problem it solves
+- Python or real-world analogy for each
+- One concrete example
+- One question to check I understood
+
+[Then show the code blocks with filenames]
+
+**Then explain this code line by line:**
+[code block 1]
+[code block 2]
+[etc]
+
+**Finally ask me:**
+Q1: [question about concept 1]
+Q2: [question about concept 2]
+Q3: [question about why we made this choice]
+
+---
+
+### Step 3: Attach Code in Correct Order
+- NEW FILES: attach entire file (100% of content)
+- MODIFIED FILES: attach only the changed sections plus 2 lines of context before/after
+- UNCHANGED FILES: do not attach
+- Always show filename in markdown code block
+
+### Step 4: Code Order Rule
+Attach code in DEPENDENCY order:
+- If src/index.js imports from src/db.js, show db.js first
+- If src/db.js imports from src/utils/base62.js, show base62.js first
+- Then show db.js
+- Then show index.js modifications
+
+### Step 5: Example Format
+For Phase 2 (creates db.js, modifies index.js):
+
+---LEARNING PROMPT FOR PHASE 2---
+I am a CS student... [full ChatGPT prompt above]
+
+---CODE BLOCKS---
+
+**File: src/db.js (NEW)**
+```javascript
+[entire src/db.js file]
+```
+
+**File: src/index.js (MODIFIED)**
+```javascript
+// Only the new lines added to src/index.js:
+const db = require('./db')
+
+// ... existing code unchanged ...
+
+app.listen(PORT, async () => {
+  console.log('Server running on port ' + PORT)
+  await db.testConnection()
+})
+```
+
+---
+
+### Step 6: Never Do This
+- Do not include node_modules, .env, .git, or package-lock.json
+- Do not generate unless explicitly asked for "generate learning prompt"
+- Do not guess at code — only attach actual file content
+- Do not modify the generated prompt — the format is fixed
+- Do not attach old/unchanged code
+
+Rule: After completion, I will remind the developer 
+with: "Learning prompt generated. Paste into ChatGPT to learn."
 
 ## Git Rules
 - After every phase is verified working, commit with this exact format:

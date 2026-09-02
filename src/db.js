@@ -39,4 +39,26 @@ async function testConnection() {
   console.log('Database connected at:', rows[0].time)
 }
 
-module.exports = { query, testConnection }
+// createLink inserts a new row and returns the created row.
+// RETURNING * tells Postgres to hand back the full inserted row,
+// including the auto-generated id and created_at — saves us
+// a second query to fetch what we just inserted.
+async function createLink(shortCode, originalUrl) {
+  const rows = await query(
+    'INSERT INTO links (short_code, original_url) VALUES ($1, $2) RETURNING *',
+    [shortCode, originalUrl]
+  )
+  return rows[0]
+}
+
+// getLink looks up a link by its short_code.
+// Returns undefined if no row matches — the caller checks for that.
+async function getLink(shortCode) {
+  const rows = await query(
+    'SELECT * FROM links WHERE short_code = $1',
+    [shortCode]
+  )
+  return rows[0]
+}
+
+module.exports = { query, testConnection, createLink, getLink }
