@@ -11,6 +11,9 @@ const db = require('./db')
 // Import the Base62 utility to encode numeric IDs into short alphanumeric codes.
 const base62 = require('./utils/base62')
 
+// Import the Redis caching module for read-through cache patterns and metrics.
+const cache = require('./redis')
+
 // Import the Express library and create an application instance.
 // `app` is the object we attach middleware and routes to.
 const express = require('express')
@@ -58,20 +61,36 @@ app.post('/shorten', async (req, res) => {
   }
 })
 
-// GET /:code
-// Looks up the short code in the database and redirects.
-// Returns 404 if no matching link exists.
 app.get('/:code', async (req, res) => {
   try {
-    const link = await db.getLink(req.params.code)
+    const { code } = req.params
+
+    const cachedUrl = await cache.get(code)
+    if (cachedUrl) {
+      return res.redirect(cachedUrl)
+    }
+
+    const link = await db.getLink(code)
     if (!link) {
       return res.status(404).json({ error: 'Link not found' })
     }
+
+    const ttlSeconds = 24 * 60 * 60
+    await cache.setWithTTL(code, link.original_url, ttlSeconds)
+
     res.redirect(link.original_url)
   } catch (err) {
     console.error('Error in GET /:code:', err)
     res.status(500).json({ error: 'Failed to retrieve link' })
   }
+})
+
+app.get('/metrics/cache', (req, res) => {
+  const metrics = cache.getMetrics()
+  res.json({
+    message: 'Cache performance metrics',
+    ...metrics
+  })
 })
 
 // Start server, then immediately test database connection.

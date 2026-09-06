@@ -41,6 +41,7 @@ Components:
 | Decision | Options | Chosen | Why | Trade-off |
 |---|---|---|---|---|
 | Connection pool vs single connection | Single connection per request vs Pool | Pool (via pg library) | Pool reuses connections — opening a new TCP connection per request adds 20-100ms overhead and crashes under load | Connection limit — pool has a max size, requests queue if exceeded |
+| Read-through cache vs write-through vs write-behind | Write-through (sync write to cache+DB), Read-through (lazy load on miss), Write-behind (async flush to DB) | Read-through | Simple to implement — cache only populates after first request, no extra write-path complexity | Cold cache on first request always hits DB; first user for any link pays full DB latency |
 
 # 5. Skills demonstrated
 
@@ -71,6 +72,10 @@ Components:
      - Cons: Hash collisions possible even after truncation; unrelated URLs can collide, causing data loss
   
   Evidence: src/utils/base62.js (encode/decode implementation), src/db.js createLink() (two-step insert pattern)
+- [x] Read-through caching pattern — evidence: src/redis.js get()/setWithTTL(), GET /:code checks cache before DB
+- [x] TTL-based cache expiry — evidence: 24-hour TTL on redirect cache in src/index.js
+- [x] Cache hit ratio measurement — evidence: /metrics/cache endpoint tracks hits/misses/ratio
+- [x] Graceful cache failure handling — evidence: src/redis.js get() catches errors, treats as miss instead of crashing
 
 # 6. Metrics
 
@@ -80,4 +85,20 @@ Components:
 
 # 9. Handoff
 
-# 10. Postmortem
+# 10. Honest limitations
+
+- **Stale cache on URL update:** If a link's original_url is updated in 
+  PostgreSQL after being cached, the Redis cache continues serving the 
+  OLD url for up to 24 hours (the TTL). No cache invalidation logic 
+  exists on update because this project doesn't support editing links 
+  after creation. If update functionality were added, the fix would be 
+  to call cache.del(code) immediately after any UPDATE query on that row.
+
+- **No cache warming:** Every link's first request always hits PostgreSQL 
+  (cold cache). This is intentional for simplicity — proactive cache 
+  warming would add complexity not justified at this scale.
+
+- **Single Redis instance:** No replication or clustering. If Redis goes 
+  down, cache.get() catches the error and falls back to querying 
+  PostgreSQL directly — reads still work, just slower. This fallback 
+  behavior was verified in src/redis.js error handling.
