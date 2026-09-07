@@ -10,6 +10,11 @@ const WINDOW_SECONDS = 60        // 60 second window
 const MAX_REQUESTS   = 10        // max requests per window per IP
 
 async function rateLimit(req, res, next) {
+  // Skip rate limiting during load tests
+  if (process.env.DISABLE_RATE_LIMIT === 'true') {
+    return next()
+  }
+
   try {
     const ip  = req.ip
     const key = `ratelimit:${ip}`

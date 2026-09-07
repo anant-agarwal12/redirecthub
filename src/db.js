@@ -9,7 +9,10 @@ const { Pool } = require('pg')
 // A pool keeps several connections open and reuses them.
 // Much faster than opening a new connection for every request.
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
+  connectionString: process.env.DATABASE_URL,
+  max: 20,                // max connections in pool (default is 10)
+  idleTimeoutMillis: 30000,   // close idle connections after 30s
+  connectionTimeoutMillis: 2000, // fail fast if no connection available
 })
 
 // If the pool encounters an unexpected error on an idle connection,

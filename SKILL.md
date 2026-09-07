@@ -47,6 +47,8 @@ Components:
 | Cache TTL strategy for expiring links | Fixed 24-hour TTL (risk of serving stale expired links from cache), Dynamic TTL matching actual link expiry | Dynamic TTL calculated from expires_at | Prevents serving expired links from cache — TTL matches actual link lifetime so Redis and PostgreSQL always agree on whether a link is valid | More complex — must handle null expires_at for permanent links and edge case of near-zero TTL |
 | HTTP status for expired links | 404 Not Found (generic), 410 Gone (resource existed but is permanently unavailable) | 410 Gone | Semantically correct — 404 means "never existed or unknown", 410 means "existed but is permanently gone". Clients and crawlers treat these differently. Search engines deindex 410 faster than 404 | Slightly less common status code — some clients treat 410 same as 404 anyway |
 | Multi-stage Docker build vs single stage | Single stage (large image with dev dependencies), Multi-stage (builder stage installs deps, production stage copies only what's needed) | Multi-stage build | Production image contains zero dev dependencies or build tools — smaller attack surface, faster deploys, smaller image size | Slightly more complex Dockerfile — two FROM statements |
+| Connection pool size | Default pool of 10 connections, Increased to 20 connections | 20 connections (max: 20) | At 2000 RPS with cache misses, 10 connections caused queue buildup producing p95 outliers. Doubling pool size reduced connection wait time. | Higher memory usage per instance — each PostgreSQL connection uses ~5-10MB |
+| Rate limiter bypass for load testing | Hard-coded bypass, Environment variable flag | DISABLE_RATE_LIMIT env var | Clean separation — production runs with rate limiting, load tests disable it via env var without touching code | Must remember to not set this in production |
 
 # 5. Skills demonstrated
 
@@ -102,8 +104,27 @@ Components:
 - [x] Database schema initialisation via init.sql — evidence: init.sql mounted to docker-entrypoint-initdb.d
 - [x] Non-root container user — evidence: appuser created in Dockerfile for security
 - [x] Data persistence via Docker volumes — evidence: postgres_data volume in docker-compose.yml
+- [x] Load testing with k6 — evidence: tests/load-test.js with constant-arrival-rate executor at 100/500/2000 RPS
+- [x] Latency percentile interpretation — evidence: p50 7ms, p95 17ms, max 635ms at 2000 RPS documented
+- [x] Bottleneck identification and fix — evidence: connection pool increased from 10 to 20 after identifying DB queue buildup at high RPS
+- [x] Zero-downtime load handling — evidence: 0 HTTP failures across 78,001 requests at 2000 RPS
 
-# 6. Metrics
+# 6. Numbers I measured
+
+| Metric | Before fix | After fix | How measured |
+|---|---|---|---|
+| p50 latency | 7.55ms | 7.06ms | k6 constant-arrival-rate load test |
+| p95 latency | 12.08ms | 17.55ms | k6 constant-arrival-rate load test |
+| Max RPS sustained | 2000 | 2000 | k6 load_2000 stage — zero HTTP failures |
+| HTTP failure rate | 0% | 0% | k6 http_req_failed metric |
+| Error rate | 0.15% | 0.12% | k6 custom errors metric (fixed denominator) |
+| Cache hit ratio | measured per session | measured per session | /metrics/cache endpoint |
+| Connection pool | 10 (default) | 20 (tuned) | src/db.js Pool config |
+
+Bottleneck found: DB connection pool exhaustion at 2000 RPS causing 
+101/78001 (0.13%) requests to exceed 200ms response time.
+Fix applied: Increased pool max from 10 to 20. Zero HTTP failures 
+at all RPS tiers before and after fix.
 
 # 7. Bugs and lessons
 
@@ -116,6 +137,16 @@ Components:
    Cause: Redis cached only the URL string with a fixed 24-hour TTL — no expiry information stored in cache, so a link could expire in DB but still be served from Redis for up to 24 hours
    Fix: Cache a JSON payload containing both url and expires_at, check expiry on every cache hit, delete stale cache entry on detection, calculate TTL dynamically from actual link expiry time
    Lesson: When cached data has its own independent expiry schedule, the cache TTL must match — a fixed TTL is only safe when underlying data never changes on its own schedule
+
+5. Symptom: k6 error rate showed 100% even when most requests succeeded
+   Cause: errorRate.add(1) only called on failures — denominator was failure count not total count, making ratio meaningless
+   Fix: Changed to errorRate.add(!success) so every iteration contributes to denominator regardless of outcome
+   Lesson: Rate metrics need both numerator AND denominator to be meaningful — always call the metric on every iteration
+
+6. Symptom: 101 requests out of 78001 exceeded 200ms at 2000 RPS
+   Cause: Default pg Pool size of 10 connections caused queue buildup when cache miss rate spiked under high load
+   Fix: Increased Pool max to 20, added idleTimeoutMillis and connectionTimeoutMillis for better connection lifecycle
+   Lesson: Always tune connection pool size based on measured load — default settings are conservative and rarely match production traffic patterns
 
 # 8. Deployment notes
 

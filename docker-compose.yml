@@ -42,6 +42,7 @@ services:
       PORT: 3000
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/redirecthub
       REDIS_URL: redis://redis:6379
+      DISABLE_RATE_LIMIT: 'true'
     depends_on:
       postgres:
         condition: service_healthy
