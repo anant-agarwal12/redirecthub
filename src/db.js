@@ -52,11 +52,34 @@ async function createLink(shortCode, originalUrl) {
 }
 
 // getLink looks up a link by its short_code.
-// Returns undefined if no row matches — the caller checks for that.
+// Checks if the link has expired and returns { expired: true } if it has.
+// Returns undefined if no row matches.
 async function getLink(shortCode) {
   const rows = await query(
     'SELECT * FROM links WHERE short_code = $1',
     [shortCode]
+  )
+  const link = rows[0]
+
+  if (!link) {
+    return undefined
+  }
+
+  // Check if link has expired
+  if (link.expires_at && new Date(link.expires_at) < new Date()) {
+    return { expired: true, link }
+  }
+
+  return link
+}
+
+// createLinkWithExpiry inserts a link with an expiry date.
+// expiryDays is the number of days until the link expires.
+async function createLinkWithExpiry(shortCode, originalUrl, expiryDays) {
+  const expiresAt = new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000)
+  const rows = await query(
+    'INSERT INTO links (short_code, original_url, expires_at) VALUES ($1, $2, $3) RETURNING *',
+    [shortCode, originalUrl, expiresAt]
   )
   return rows[0]
 }
@@ -70,4 +93,4 @@ async function logClick(shortCode, ipAddress, userAgent) {
   )
 }
 
-module.exports = { query, testConnection, createLink, getLink, logClick }
+module.exports = { query, testConnection, createLink, createLinkWithExpiry, getLink, logClick }

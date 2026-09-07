@@ -43,6 +43,9 @@ Components:
 | Connection pool vs single connection | Single connection per request vs Pool | Pool (via pg library) | Pool reuses connections — opening a new TCP connection per request adds 20-100ms overhead and crashes under load | Connection limit — pool has a max size, requests queue if exceeded |
 | Read-through cache vs write-through vs write-behind | Write-through (sync write to cache+DB), Read-through (lazy load on miss), Write-behind (async flush to DB) | Read-through | Simple to implement — cache only populates after first request, no extra write-path complexity | Cold cache on first request always hits DB; first user for any link pays full DB latency |
 | Sync analytics write vs fire-and-forget async | Awaiting INSERT before redirect (adds 10-50ms per request), Fire-and-forget without await | Fire-and-forget | Analytics latency must never affect redirect speed — a 50ms analytics write would add 50ms to every user's redirect experience | If analytics INSERT fails silently, click data is lost — acceptable tradeoff since analytics is non-critical |
+| Rate limiting algorithm | Fixed window (counter resets every N seconds), Sliding window (count requests in last N seconds from now), Token bucket (steady refill rate) | Sliding window via Redis sorted sets | Prevents boundary exploit — fixed window allows 2x requests at window boundary (100 at 0:59 + 100 at 1:01 = 200 in 2 seconds). Sliding window enforces exactly N requests per N seconds regardless of timing | Higher memory — stores one timestamp per request vs one counter per window |
+| Cache TTL strategy for expiring links | Fixed 24-hour TTL (risk of serving stale expired links from cache), Dynamic TTL matching actual link expiry | Dynamic TTL calculated from expires_at | Prevents serving expired links from cache — TTL matches actual link lifetime so Redis and PostgreSQL always agree on whether a link is valid | More complex — must handle null expires_at for permanent links and edge case of near-zero TTL |
+| HTTP status for expired links | 404 Not Found (generic), 410 Gone (resource existed but is permanently unavailable) | 410 Gone | Semantically correct — 404 means "never existed or unknown", 410 means "existed but is permanently gone". Clients and crawlers treat these differently. Search engines deindex 410 faster than 404 | Slightly less common status code — some clients treat 410 same as 404 anyway |
 
 # 5. Skills demonstrated
 
@@ -81,10 +84,30 @@ Components:
 - [x] Fire-and-forget error handling — evidence: .catch() on detached promise prevents unhandled rejection crash
 - [x] HTTP metadata extraction — evidence: req.ip and req.headers['user-agent'] captured per click
 - [x] Async analytics off request path — evidence: clicks table rows exist with timestamps showing background writes
+- [x] Sliding window rate limiting algorithm — evidence: src/middleware/rateLimit.js using Redis sorted sets (zAdd, zRemRangeByScore, zCard)
+- [x] Redis sorted set operations — evidence: zAdd adds timestamp per request, zRemRangeByScore removes old entries, zCard counts remaining
+- [x] Express middleware pattern — evidence: rateLimit passed as second argument to app.get and app.post — runs before route handler
+- [x] Fail-open error handling in middleware — evidence: rateLimit.js catch block calls next() if Redis is down so service stays available during cache outage
+- [x] 429 Too Many Requests — evidence: burst test confirmed requests 11+ blocked with correct JSON error body and retryAfter field
+- [x] Link expiry with timestamp-based validation — evidence: links.expires_at column in PostgreSQL, getLink() checks expiry at read time
+- [x] Dynamic cache TTL matching link lifetime — evidence: ttlSeconds calculated from expires_at in GET /:code, permanent links default to 24 hours
+- [x] Cache invalidation on detected expiry — evidence: cache.del(code) called immediately when expired link found on cache hit
+- [x] HTTP 410 Gone vs 404 Not Found — evidence: expired links return 410, missing links return 404, tested and verified
+- [x] Structured JSON in Redis cache — evidence: cache payload stores both url and expires_at so expiry can be checked on cache hit without DB query
 
 # 6. Metrics
 
 # 7. Bugs and lessons
+
+1. Symptom: PowerShell burst test showed "Status 302" printed after 429 errors
+   Cause: Invoke-WebRequest throws exception on 4xx responses, $response variable retains previous value from last successful request
+   Fix: Read error message from the exception body directly, not from $response
+   Lesson: When testing APIs with PowerShell, always read the exception message for 4xx responses — $response only updates on successful requests
+
+2. Symptom: Expired links still redirected after expiry
+   Cause: Redis cached only the URL string with a fixed 24-hour TTL — no expiry information stored in cache, so a link could expire in DB but still be served from Redis for up to 24 hours
+   Fix: Cache a JSON payload containing both url and expires_at, check expiry on every cache hit, delete stale cache entry on detection, calculate TTL dynamically from actual link expiry time
+   Lesson: When cached data has its own independent expiry schedule, the cache TTL must match — a fixed TTL is only safe when underlying data never changes on its own schedule
 
 # 8. Deployment notes
 
