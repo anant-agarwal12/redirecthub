@@ -42,6 +42,7 @@ Components:
 |---|---|---|---|---|
 | Connection pool vs single connection | Single connection per request vs Pool | Pool (via pg library) | Pool reuses connections — opening a new TCP connection per request adds 20-100ms overhead and crashes under load | Connection limit — pool has a max size, requests queue if exceeded |
 | Read-through cache vs write-through vs write-behind | Write-through (sync write to cache+DB), Read-through (lazy load on miss), Write-behind (async flush to DB) | Read-through | Simple to implement — cache only populates after first request, no extra write-path complexity | Cold cache on first request always hits DB; first user for any link pays full DB latency |
+| Sync analytics write vs fire-and-forget async | Awaiting INSERT before redirect (adds 10-50ms per request), Fire-and-forget without await | Fire-and-forget | Analytics latency must never affect redirect speed — a 50ms analytics write would add 50ms to every user's redirect experience | If analytics INSERT fails silently, click data is lost — acceptable tradeoff since analytics is non-critical |
 
 # 5. Skills demonstrated
 
@@ -76,6 +77,10 @@ Components:
 - [x] TTL-based cache expiry — evidence: 24-hour TTL on redirect cache in src/index.js
 - [x] Cache hit ratio measurement — evidence: /metrics/cache endpoint tracks hits/misses/ratio
 - [x] Graceful cache failure handling — evidence: src/redis.js get() catches errors, treats as miss instead of crashing
+- [x] Asynchronous write paths — evidence: db.logClick() called without await in GET /:code
+- [x] Fire-and-forget error handling — evidence: .catch() on detached promise prevents unhandled rejection crash
+- [x] HTTP metadata extraction — evidence: req.ip and req.headers['user-agent'] captured per click
+- [x] Async analytics off request path — evidence: clicks table rows exist with timestamps showing background writes
 
 # 6. Metrics
 

@@ -61,4 +61,13 @@ async function getLink(shortCode) {
   return rows[0]
 }
 
-module.exports = { query, testConnection, createLink, getLink }
+// Logs a click event. Called WITHOUT await from the route handler
+// so it never blocks the redirect response.
+async function logClick(shortCode, ipAddress, userAgent) {
+  await query(
+    'INSERT INTO clicks (short_code, ip_address, user_agent) VALUES ($1, $2, $3)',
+    [shortCode, ipAddress, userAgent]
+  )
+}
+
+module.exports = { query, testConnection, createLink, getLink, logClick }

@@ -67,6 +67,9 @@ app.get('/:code', async (req, res) => {
 
     const cachedUrl = await cache.get(code)
     if (cachedUrl) {
+      db.logClick(code, req.ip, req.headers['user-agent'])
+        .catch(err => console.error('Failed to log click:', err))
+
       return res.redirect(cachedUrl)
     }
 
@@ -77,6 +80,9 @@ app.get('/:code', async (req, res) => {
 
     const ttlSeconds = 24 * 60 * 60
     await cache.setWithTTL(code, link.original_url, ttlSeconds)
+
+    db.logClick(code, req.ip, req.headers['user-agent'])
+      .catch(err => console.error('Failed to log click:', err))
 
     res.redirect(link.original_url)
   } catch (err) {
