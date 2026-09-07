@@ -148,11 +148,67 @@ at all RPS tiers before and after fix.
    Fix: Increased Pool max to 20, added idleTimeoutMillis and connectionTimeoutMillis for better connection lifecycle
    Lesson: Always tune connection pool size based on measured load — default settings are conservative and rarely match production traffic patterns
 
-# 8. Deployment notes
+# 8. What I would do differently at 100x scale
 
-# 9. Handoff
+- **Distributed ID generation:** Auto-increment breaks across database shards — two independent shards can generate the same integer. Switch to Snowflake-style distributed IDs (timestamp + machine ID + sequence) for globally unique IDs without central coordination.
 
-# 10. Honest limitations
+- **Horizontal app scaling:** Single Node.js instance is CPU-bound and single-threaded. At 100x scale, run multiple instances behind a load balancer (Nginx/AWS ALB). This requires Redis Cluster instead of single Redis instance for shared rate-limit state — a request hitting app-2 needs to know about requests hitting app-1's rate limiter.
+
+- **Database read replicas:** Redirect endpoint is read-heavy. Use PostgreSQL streaming replication to create read replicas, route read queries to replicas, reserving primary for writes. This decouples read and write load.
+
+- **Decouple analytics completely:** Current fire-and-forget is still in-process. At scale, push click events to Kafka/RabbitMQ and consume in a separate analytics service. Redirect latency becomes completely independent of analytics throughput — a spike in clicks cannot affect redirect speed.
+
+- **Database sharding:** Single PostgreSQL instance maxes out around 50 million rows. Shard by short_code prefix (0-2 → shard 1, 3-5 → shard 2, etc.) or by hash. Each shard owns its own links and clicks tables. This requires a shard router in the app layer to route queries to the right shard.
+
+- **CDN for redirects:** A redirect is just a 301/302 HTTP response. Deploy behind Cloudflare or AWS CloudFront — edge nodes cache the redirect globally. User in Singapore hits local edge node, gets redirect in <5ms without touching our servers.
+
+# 9. Interview answers I have rehearsed
+
+**Q1: Walk me through a request to GET /abc123. What happens at every layer?**
+
+A: "User sends GET /abc123. It hits our rate-limiter middleware first — we check Redis for this IP's request count in the last 60 seconds using a sorted set. If under 10 requests, we continue. Next, we check our Redis cache for the short code 'abc123' — if it's cached as JSON with the url and expires_at timestamp, we check expiry. If not expired and still cached, we return a 302 redirect immediately — this is the fast path, sub-millisecond from Redis. If it's a cache miss, we query PostgreSQL using a parameterized query to prevent SQL injection — SELECT * FROM links WHERE short_code = $1. We get back the url and expires_at. We check if it's expired — if yes, return 410 Gone. If no, we cache the JSON payload in Redis with a TTL matching the link's actual expiry time, and simultaneously fire-and-forget a db.logClick() call that records the IP and user agent asynchronously without blocking the response. We return 302 redirect to the original URL. The user sees the redirect instantly while the click log happens in the background."
+
+**Q2: Why did you choose Base62 over UUID or random strings for short codes?**
+
+A: "Three options existed. UUID is 36 characters and not URL-safe — you'd need Base64 encoding which adds + and / characters requiring URL-encoding. Random strings have collision risk — the more codes generated, the higher the probability two requests generate the same string, requiring either a retry loop or a SELECT-then-INSERT race condition. I chose Base62 — auto-increment ID from PostgreSQL, encoded to Base62 using 62 characters (0-9, a-z, A-Z). This gives guaranteed uniqueness from the database, stays URL-safe, and produces compact short codes. Trade-off: it's sequential and predictable — someone could guess that code 2 exists because code 1 exists. This is fine for a single-instance system. If we scaled to multiple database shards, auto-increment breaks because two shards both generate ID=1. Then we'd switch to Snowflake-style IDs."
+
+**Q3: Your p95 is 17ms at 2000 RPS. What causes the 101 requests that exceed 200ms? How would you fix it further?**
+
+A: "At 2000 RPS, most requests are cache hits and serve from Redis in <10ms. But some requests miss the cache and query PostgreSQL. When cache misses cluster together, they compete for connections from the pool. I tuned the pool from 10 to 20 connections, which reduced the problem. The remaining 101 outliers are likely: (1) Unlucky request sequencing — multiple cache misses hit at exact same time, still queue for available connection, (2) Slow PostgreSQL query — if the DB itself is slow that day, even with connection available, query takes longer, (3) GC pause — Node.js garbage collection can pause the event loop for 10-50ms. To fix further: (a) increase pool more — test pool=50 and measure if p95 improves or hits diminishing returns, (b) add query result caching at app layer — in-memory cache for hot codes, (c) move analytics writes fully to a queue so they don't compete for DB connections, (d) shard the database so no single DB is the bottleneck. For a production system at true 100x scale, probably all four."
+
+**Q4: Why fire-and-forget for analytics instead of awaiting the insert?**
+
+A: "If I awaited the analytics insert, the user would wait for the database write to complete before getting the redirect. Analytics inserts take 10-50ms. That adds 10-50ms of latency to every redirect just for logging. Fire-and-forget means the function starts but we don't wait for it. The user gets redirected instantly. The analytics write happens asynchronously. I still attach a .catch() to log errors if it fails, so we know about DB problems. Trade-off: if the database is down, we lose clicks. This is acceptable because analytics is not critical — the redirect still works. If it were a payment transaction, we could not use fire-and-forget because losing the transaction is unacceptable."
+
+**Q5: Walk me through what changed from before to after the connection pool tuning.**
+
+A: "Before: PostgreSQL pool had default max of 10 connections. Under 2000 RPS load, when cache misses spiked, 20+ requests might need a DB connection simultaneously. Only 10 were available. Requests queued waiting for one to be released. Queue time added 50-100ms latency to some requests, causing 101 requests to exceed 200ms. After: pool max = 20. Most requests got a connection immediately without waiting. The 101 outliers didn't disappear — they just became 0.13% instead of visible. This is the law of diminishing returns. Further increases would help less. The real fix at massive scale is read replicas or sharding, not bigger pools."
+
+**Q6: What's the difference between 404 and 410 in your implementation?**
+
+A: "404 Not Found means 'this resource never existed or is unknown'. 410 Gone means 'this resource existed but is permanently unavailable now'. I return 404 when a short code doesn't exist in the database. I return 410 when a short code exists but its expires_at timestamp has passed. This is semantically correct and matters for search engines — they treat 410 as 'please remove this from your index' and 404 as 'unknown', and they index differently."
+
+**Q7: How does Redis caching work if the link expires but the Redis cache still has it?**
+
+A: "This is the hard problem in caching. I solved it by caching a JSON payload containing both the url AND the expires_at timestamp. On every cache hit, I check if expires_at < now(). If true, I delete the cache entry and return 410. This adds a tiny bit of latency to cache hits (parsing JSON and checking timestamp) but prevents the bug where expired links stay accessible. Additionally, I set the Redis TTL dynamically — if a link expires in 30 seconds, the Redis entry expires in 30 seconds too, so stale entries auto-clean."
+
+**Q8: Database connection pooling — why not just make a new connection per request?**
+
+A: "Opening a new TCP connection to PostgreSQL takes 100-300ms. If every request opened a new connection, that 100-300ms would add to every query latency. A pool keeps connections open and reuses them. The tradeoff: connections have memory overhead and server-side limits. So pools are sized — I use 20 max. When the pool is full, new requests wait for a free connection. This is better than 100 concurrent connection opening errors."
+
+**Q9: Why sliding window rate limiting over fixed window?**
+
+A: "Fixed window: reset counter every 60 seconds. Problem — at the boundary, a client could send 10 requests at 59s and 10 more at 61s = 20 requests in 2 seconds, bypassing the per-minute limit. Sliding window: count requests in the last 60 seconds from now. No boundary exploit. I use Redis sorted sets — each request timestamp is a member, old timestamps are removed, count remaining. More memory intensive but prevents the bypass."
+
+**Q10: Why Docker Compose instead of just running node src/index.js?**
+
+A: "node src/index.js works locally but is fragile — requires manual service startup order, credentials hardcoded or in environment, no reproducibility. Docker Compose: one command, three services start in dependency order (postgres health check before app), databases initialize automatically, volumes persist data, it runs identically on my machine, a coworker's machine, and production. This is the difference between 'I built this locally' and 'I built this in a deployable way'."
+
+# 10. Deployment notes
+
+# 11. Handoff
+
+# 12. Honest limitations
 
 - **Stale cache on URL update:** If a link's original_url is updated in 
   PostgreSQL after being cached, the Redis cache continues serving the 
