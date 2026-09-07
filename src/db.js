@@ -73,17 +73,6 @@ async function getLink(shortCode) {
   return link
 }
 
-// createLinkWithExpiry inserts a link with an expiry date.
-// expiryDays is the number of days until the link expires.
-async function createLinkWithExpiry(shortCode, originalUrl, expiryDays) {
-  const expiresAt = new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000)
-  const rows = await query(
-    'INSERT INTO links (short_code, original_url, expires_at) VALUES ($1, $2, $3) RETURNING *',
-    [shortCode, originalUrl, expiresAt]
-  )
-  return rows[0]
-}
-
 // Logs a click event. Called WITHOUT await from the route handler
 // so it never blocks the redirect response.
 async function logClick(shortCode, ipAddress, userAgent) {
@@ -93,4 +82,4 @@ async function logClick(shortCode, ipAddress, userAgent) {
   )
 }
 
-module.exports = { query, testConnection, createLink, createLinkWithExpiry, getLink, logClick }
+module.exports = { query, testConnection, createLink, getLink, logClick }
