@@ -46,6 +46,7 @@ Components:
 | Rate limiting algorithm | Fixed window (counter resets every N seconds), Sliding window (count requests in last N seconds from now), Token bucket (steady refill rate) | Sliding window via Redis sorted sets | Prevents boundary exploit — fixed window allows 2x requests at window boundary (100 at 0:59 + 100 at 1:01 = 200 in 2 seconds). Sliding window enforces exactly N requests per N seconds regardless of timing | Higher memory — stores one timestamp per request vs one counter per window |
 | Cache TTL strategy for expiring links | Fixed 24-hour TTL (risk of serving stale expired links from cache), Dynamic TTL matching actual link expiry | Dynamic TTL calculated from expires_at | Prevents serving expired links from cache — TTL matches actual link lifetime so Redis and PostgreSQL always agree on whether a link is valid | More complex — must handle null expires_at for permanent links and edge case of near-zero TTL |
 | HTTP status for expired links | 404 Not Found (generic), 410 Gone (resource existed but is permanently unavailable) | 410 Gone | Semantically correct — 404 means "never existed or unknown", 410 means "existed but is permanently gone". Clients and crawlers treat these differently. Search engines deindex 410 faster than 404 | Slightly less common status code — some clients treat 410 same as 404 anyway |
+| Multi-stage Docker build vs single stage | Single stage (large image with dev dependencies), Multi-stage (builder stage installs deps, production stage copies only what's needed) | Multi-stage build | Production image contains zero dev dependencies or build tools — smaller attack surface, faster deploys, smaller image size | Slightly more complex Dockerfile — two FROM statements |
 
 # 5. Skills demonstrated
 
@@ -94,6 +95,13 @@ Components:
 - [x] Cache invalidation on detected expiry — evidence: cache.del(code) called immediately when expired link found on cache hit
 - [x] HTTP 410 Gone vs 404 Not Found — evidence: expired links return 410, missing links return 404, tested and verified
 - [x] Structured JSON in Redis cache — evidence: cache payload stores both url and expires_at so expiry can be checked on cache hit without DB query
+- [x] Multi-stage Docker build — evidence: Dockerfile with builder and production stages
+- [x] Docker Compose multi-service orchestration — evidence: docker-compose.yml with app, postgres, redis services
+- [x] Service health checks — evidence: postgres and redis healthcheck config, app depends_on with condition: service_healthy
+- [x] Docker networking between containers — evidence: DATABASE_URL uses postgres hostname, REDIS_URL uses redis hostname (not localhost)
+- [x] Database schema initialisation via init.sql — evidence: init.sql mounted to docker-entrypoint-initdb.d
+- [x] Non-root container user — evidence: appuser created in Dockerfile for security
+- [x] Data persistence via Docker volumes — evidence: postgres_data volume in docker-compose.yml
 
 # 6. Metrics
 

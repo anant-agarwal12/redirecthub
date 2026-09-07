@@ -1,0 +1,10 @@
+node_modules
+.env
+.git
+.gitignore
+*.log
+docker-compose.yml
+README.md
+SKILL.md
+tests/
+src/test-redis.js
